@@ -1,0 +1,97 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: backend
+  namespace: docbook
+  labels:
+    app: docbook
+    tier: backend
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: docbook
+      tier: backend
+  template:
+    metadata:
+      labels:
+        app: docbook
+        tier: backend
+    spec:
+      initContainers:
+        # Wait for MySQL to be ready before starting backend
+        - name: wait-for-mysql
+          image: busybox:1.36
+          command:
+            - sh
+            - -c
+            - |
+              echo "Waiting for MySQL..."
+              until nc -z mysql-service 3306; do
+                echo "MySQL not ready, retrying in 3s..."
+                sleep 3
+              done
+              echo "MySQL is ready!"
+      containers:
+        - name: backend
+          image: docbook-backend:latest
+          imagePullPolicy: IfNotPresent
+          ports:
+            - containerPort: 8000
+          env:
+            - name: DATABASE_URL
+              valueFrom:
+                secretKeyRef:
+                  name: docbook-secrets
+                  key: DATABASE_URL
+            - name: SECRET_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: docbook-secrets
+                  key: SECRET_KEY
+            - name: FRONTEND_URL
+              valueFrom:
+                configMapKeyRef:
+                  name: docbook-config
+                  key: FRONTEND_URL
+            - name: DEBUG
+              valueFrom:
+                configMapKeyRef:
+                  name: docbook-config
+                  key: DEBUG
+          readinessProbe:
+            httpGet:
+              path: /api/health
+              port: 8000
+            initialDelaySeconds: 10
+            periodSeconds: 10
+          livenessProbe:
+            httpGet:
+              path: /api/health
+              port: 8000
+            initialDelaySeconds: 15
+            periodSeconds: 20
+          resources:
+            requests:
+              cpu: 100m
+              memory: 256Mi
+            limits:
+              cpu: 300m
+              memory: 512Mi
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: backend-service
+  namespace: docbook
+  labels:
+    app: docbook
+    tier: backend
+spec:
+  type: ClusterIP
+  selector:
+    app: docbook
+    tier: backend
+  ports:
+    - port: 8000
+      targetPort: 8000
