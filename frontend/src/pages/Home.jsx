@@ -1,6 +1,6 @@
 import { Link } from 'react-router-dom';
 import { FiSearch, FiCalendar, FiShield, FiStar, FiClock, FiUsers } from 'react-icons/fi';
-import { useAuth } from '../../context/AuthContext';
+import { useAuth } from '../context/AuthContext';
 
 const Home = () => {
   const { isAuthenticated } = useAuth();

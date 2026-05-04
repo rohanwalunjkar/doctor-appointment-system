@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
-import { notificationsAPI } from '../../services/api';
-import Loading from '../../components/common/Loading';
+import { notificationsAPI } from '../services/api';
+import Loading from '../components/common/Loading';
 import toast from 'react-hot-toast';
 import { FiBell, FiCheck, FiCheckCircle } from 'react-icons/fi';
 

@@ -1,9 +1,9 @@
 import { useState, useEffect } from 'react';
-import { useAuth } from '../../context/AuthContext';
-import { dashboardAPI, appointmentsAPI } from '../../services/api';
+import { useAuth } from '../context/AuthContext';
+import { dashboardAPI, appointmentsAPI } from '../services/api';
 import { Link } from 'react-router-dom';
 import { FiCalendar, FiClock, FiCheckCircle, FiXCircle, FiUsers, FiDollarSign, FiStar, FiArrowRight } from 'react-icons/fi';
-import Loading from '../../components/common/Loading';
+import Loading from '../components/common/Loading';
 
 const Dashboard = () => {
   const { user, isDoctor, isAdmin, isPatient } = useAuth();
