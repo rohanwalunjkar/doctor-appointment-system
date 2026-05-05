@@ -78,19 +78,19 @@ jobs:
             # ─── Build Docker Images ─────────────────────────────
             echo ""
             echo "=== [4/8] Building Backend Docker Image ==="
-            docker build -t rohan2747/docbook-backend:latest ./backend 2>&1 | tail -5
+            sudo docker build -t rohan2747/docbook-backend:latest ./backend 2>&1 | tail -5
             echo "Backend image built ✓"
 
             echo ""
             echo "=== [5/8] Building Frontend Docker Image ==="
-            docker build -t rohan2747/docbook-frontend:latest ./frontend 2>&1 | tail -5
+            sudo docker build -t rohan2747/docbook-frontend:latest ./frontend 2>&1 | tail -5
             echo "Frontend image built ✓"
 
             # ─── Load Images into Kind Cluster ────────────────────
             echo ""
             echo "=== [6/8] Loading Images into Kind Cluster ==="
-            kind load docker-image rohan2747/docbook-backend:latest --name docbook 2>&1 || echo "Warning: kind load backend failed (cluster name may differ)"
-            kind load docker-image rohan2747/docbook-frontend:latest --name docbook 2>&1 || echo "Warning: kind load frontend failed (cluster name may differ)"
+            sudo /usr/local/bin/kind load docker-image rohan2747/docbook-backend:latest --name docbook 2>&1 || echo "Warning: kind load backend failed"
+            sudo /usr/local/bin/kind load docker-image rohan2747/docbook-frontend:latest --name docbook 2>&1 || echo "Warning: kind load frontend failed"
             echo "Images loaded into Kind ✓"
 
             # ─── Apply K8s Manifests ──────────────────────────────
@@ -124,8 +124,10 @@ jobs:
             # ─── Kill old port-forwards & start new ones ──────────
             echo ""
             echo "=== Restarting Port Forwards ==="
-            pkill -f "kubectl port-forward" 2>/dev/null || true
+            set +e
+            pkill -f "kubectl port-forward" 2>/dev/null
             sleep 2
+            set -e
 
             # Port-forward frontend (3000 → external access)
             nohup kubectl port-forward svc/frontend-service 3000:3000 -n docbook --address=0.0.0.0 > /tmp/pf-frontend.log 2>&1 &
