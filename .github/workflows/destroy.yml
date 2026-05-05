@@ -1,0 +1,87 @@
+name: Destroy Infrastructure
+
+on:
+  workflow_dispatch:
+    inputs:
+      confirm:
+        description: 'Type "destroy" to confirm teardown'
+        required: true
+        type: string
+
+jobs:
+  destroy:
+    name: Destroy via SSH on OCI
+    runs-on: ubuntu-latest
+    if: ${{ github.event.inputs.confirm == 'destroy' }}
+
+    steps:
+      - name: Teardown Infrastructure via SSH
+        uses: appleboy/ssh-action@v1
+        with:
+          host: ${{ secrets.OCI_HOST }}
+          username: ${{ secrets.OCI_USER }}
+          key: ${{ secrets.OCI_SSH_PRIVATE_KEY }}
+          port: 22
+          timeout: 300s
+          command_timeout: 10m
+          script: |
+            set -e
+            echo "=========================================="
+            echo "  DESTROY STARTED"
+            echo "  Time: $(date)"
+            echo "  Host: $(hostname)"
+            echo "=========================================="
+
+            # ─── Stop Port-Forward Services ───────────────────────
+            echo ""
+            echo "=== [1/4] Stopping Port-Forward Services ==="
+            sudo systemctl stop docbook-frontend-pf 2>/dev/null || true
+            sudo systemctl stop docbook-backend-pf 2>/dev/null || true
+            sudo systemctl disable docbook-frontend-pf 2>/dev/null || true
+            sudo systemctl disable docbook-backend-pf 2>/dev/null || true
+            sudo rm -f /etc/systemd/system/docbook-frontend-pf.service
+            sudo rm -f /etc/systemd/system/docbook-backend-pf.service
+            sudo systemctl daemon-reload
+            echo "Port-forward services removed ✓"
+
+            # ─── Delete Kubernetes Resources ──────────────────────
+            echo ""
+            echo "=== [2/4] Deleting Kubernetes Resources ==="
+            kubectl delete -f k8s/frontend.yaml --ignore-not-found=true 2>/dev/null || true
+            echo "  ✓ frontend deleted"
+            kubectl delete -f k8s/backend.yaml --ignore-not-found=true 2>/dev/null || true
+            echo "  ✓ backend deleted"
+            kubectl delete -f k8s/mysql.yaml --ignore-not-found=true 2>/dev/null || true
+            echo "  ✓ mysql deleted"
+            kubectl delete -f k8s/secrets.yaml --ignore-not-found=true 2>/dev/null || true
+            echo "  ✓ secrets deleted"
+            kubectl delete -f k8s/configmap.yaml --ignore-not-found=true 2>/dev/null || true
+            echo "  ✓ configmap deleted"
+            kubectl delete -f k8s/namespace.yaml --ignore-not-found=true 2>/dev/null || true
+            echo "  ✓ namespace deleted"
+            echo "All K8s resources deleted ✓"
+
+            # ─── Remove Docker Images ─────────────────────────────
+            echo ""
+            echo "=== [3/4] Removing Docker Images ==="
+            sudo docker rmi rohan2747/docbook-backend:latest 2>/dev/null || true
+            sudo docker rmi rohan2747/docbook-frontend:latest 2>/dev/null || true
+            sudo docker system prune -f 2>/dev/null || true
+            echo "Docker images cleaned ✓"
+
+            # ─── Close Firewall Ports ─────────────────────────────
+            echo ""
+            echo "=== [4/4] Closing Firewall Ports ==="
+            sudo firewall-cmd --permanent --remove-port=30000/tcp 2>/dev/null || true
+            sudo firewall-cmd --permanent --remove-port=3000/tcp 2>/dev/null || true
+            sudo firewall-cmd --permanent --remove-port=8000/tcp 2>/dev/null || true
+            sudo firewall-cmd --reload
+            echo "Firewall ports closed ✓"
+
+            echo ""
+            echo "=========================================="
+            echo "  DESTROY COMPLETED"
+            echo "  Time: $(date)"
+            echo "  All resources have been removed."
+            echo "=========================================="
+
