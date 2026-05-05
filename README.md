@@ -7,6 +7,9 @@ A **full-stack** doctor appointment booking and time-slot management system buil
 ![FastAPI](https://img.shields.io/badge/FastAPI-0.104-green?logo=fastapi)
 ![MySQL](https://img.shields.io/badge/MySQL-8.0-orange?logo=mysql)
 ![TailwindCSS](https://img.shields.io/badge/TailwindCSS-3.3-blue?logo=tailwindcss)
+![Kubernetes](https://img.shields.io/badge/Kubernetes-Kind-blue?logo=kubernetes)
+![Docker](https://img.shields.io/badge/Docker-29.x-blue?logo=docker)
+![CI](https://img.shields.io/github/actions/workflow/status/rohanwalunjkar/doctor-appointment-system/ci.yml?label=CI&logo=githubactions)
 
 ## Features
 
@@ -49,6 +52,9 @@ A **full-stack** doctor appointment booking and time-slot management system buil
 | **Database** | MySQL 8.0 |
 | **Auth** | JWT (python-jose), bcrypt password hashing |
 | **API Docs** | Swagger UI (auto-generated) |
+| **Infrastructure** | Docker, Kubernetes (Kind), OCI Compute |
+| **CI/CD** | GitHub Actions (CI, Docker Build, Deploy, Destroy) |
+| **OS** | Oracle Linux 9 (OCI) |
 
 ## Project Structure
 
@@ -108,7 +114,16 @@ doctor-appointment-system/
 │   ├── mysql.yaml               # MySQL Deployment, PVC & Service
 │   ├── backend.yaml             # Backend Deployment & Service
 │   └── frontend.yaml            # Frontend Deployment & Service
+├── .github/
+│   └── workflows/
+│       ├── ci.yml               # Lint & test (backend + frontend)
+│       ├── docker-build.yml     # Verify Docker image builds
+│       ├── deploy.yml           # Deploy to OCI via SSH
+│       └── destroy.yml          # Teardown deployed resources
+├── setup-prerequisites.sh       # OCI Oracle Linux bootstrap script
 ├── docker-compose.yml
+├── INFRA.md
+├── PROJECT_LOGIC.md
 └── README.md
 ```
 
@@ -299,7 +314,163 @@ kubectl delete namespace docbook
 
 ---
 
-### Option 3 — Run without Docker (Manual Setup)
+### Option 3 — Deploy on OCI with Kind & GitHub Actions (CI/CD)
+
+Deploy the application on an **Oracle Cloud Infrastructure (OCI)** Compute instance using **Kind** (Kubernetes in Docker) with automated CI/CD via **GitHub Actions**.
+
+#### Architecture
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│  OCI Compute Instance (Oracle Linux 9)                          │
+│                                                                 │
+│  ┌───────────────────────────────────────────────────────────┐  │
+│  │  Kind Cluster "docbook" (1 master + 2 workers)            │  │
+│  │                                                           │  │
+│  │  Namespace: docbook                                       │  │
+│  │  ┌─────────┐  ┌──────────────┐  ┌──────────────────┐     │  │
+│  │  │ MySQL   │  │ Backend x2   │  │ Frontend x2      │     │  │
+│  │  │ :3306   │◄─│ FastAPI:8000 │  │ React/Vite:3000  │     │  │
+│  │  │ + PVC   │  │ ClusterIP    │  │ NodePort:30000   │     │  │
+│  │  └─────────┘  └──────────────┘  └──────────────────┘     │  │
+│  └───────────────────────────────────────────────────────────┘  │
+│                                                                 │
+│  systemd port-forward services:                                 │
+│  • 0.0.0.0:3000 → frontend-service:3000                        │
+│  • 0.0.0.0:8000 → backend-service:8000                         │
+│  • NodePort :30000 exposed via firewall                         │
+└─────────────────────────────────────────────────────────────────┘
+         │
+         │  GitHub Actions (SSH deploy)
+         ▼
+┌─────────────────────────┐
+│  GitHub Repository      │
+│  • Push to main → CI    │
+│  • Manual → Deploy      │
+│  • Manual → Destroy     │
+└─────────────────────────┘
+```
+
+#### Prerequisites
+
+1. **OCI Compute Instance** — Oracle Linux 9 (ARM or AMD), minimum 2 OCPU / 8 GB RAM
+2. **GitHub Repository** — forked or cloned `doctor-appointment-system`
+3. **SSH Key Pair** — for GitHub Actions to connect to OCI
+
+#### Step 1 — Bootstrap the OCI Instance
+
+SSH into your OCI instance and run the setup script:
+
+```bash
+ssh opc@<OCI_PUBLIC_IP>
+
+# Clone the repo
+git clone https://github.com/<your-user>/doctor-appointment-system.git
+cd doctor-appointment-system
+
+# Run the prerequisites script (installs Docker, kubectl, Kind)
+chmod +x setup-prerequisites.sh
+./setup-prerequisites.sh
+```
+
+The script installs:
+- Docker CE + configures `opc` user in `docker` group
+- kubectl (latest stable)
+- Kind v0.31.0
+- Creates a 3-node Kind cluster named **"docbook"** (1 control-plane + 2 workers)
+- Copies kubeconfig to `opc` user's `~/.kube/config`
+
+#### Step 2 — Configure GitHub Secrets
+
+Go to **Settings → Secrets and variables → Actions** in your GitHub repo and add:
+
+| Secret Name | Value |
+|-------------|-------|
+| `OCI_HOST` | Public IP of your OCI instance |
+| `OCI_USER` | `opc` (default Oracle Linux user) |
+| `OCI_SSH_KEY` | Private SSH key (PEM format) for connecting to OCI |
+
+#### Step 3 — Deploy via GitHub Actions
+
+1. Go to **Actions** tab in your GitHub repo
+2. Select **"Deploy to OCI"** workflow
+3. Click **"Run workflow"** → choose `main` branch → **Run**
+
+The workflow will:
+- SSH into your OCI instance
+- Pull latest code from GitHub
+- Build Docker images (`docbook-backend`, `docbook-frontend`)
+- Load images into the Kind cluster
+- Apply all Kubernetes manifests (`k8s/`)
+- Seed the database (creates demo accounts)
+- Set up systemd services for persistent port-forwarding
+- Open firewall ports (30000, 3000, 8000)
+
+#### Step 4 — Access the Application
+
+After deployment completes:
+
+| Service | URL |
+|---------|-----|
+| Frontend | `http://<OCI_PUBLIC_IP>:3000` |
+| Backend API | `http://<OCI_PUBLIC_IP>:8000` |
+| API Docs (Swagger) | `http://<OCI_PUBLIC_IP>:8000/api/docs` |
+| Frontend (NodePort) | `http://<OCI_PUBLIC_IP>:30000` |
+
+#### Step 5 — Destroy Resources (Optional)
+
+To teardown the deployed application (keeps the Kind cluster intact):
+
+1. Go to **Actions** → **"Destroy Deployment"** workflow
+2. Click **"Run workflow"**
+3. Type `destroy` in the confirmation field → **Run**
+
+This will:
+- Stop & remove systemd port-forward services
+- Delete the `docbook` Kubernetes namespace and all resources
+- Remove Docker images from the instance
+- Close firewall ports
+
+#### GitHub Actions Workflows
+
+| Workflow | Trigger | Purpose |
+|----------|---------|---------|
+| **CI** (`ci.yml`) | Push/PR to `main` | Lint & test backend (flake8, pytest) and frontend (ESLint) |
+| **Docker Build** (`docker-build.yml`) | Push/PR to `main` | Verify Docker images build successfully |
+| **Deploy** (`deploy.yml`) | Manual (`workflow_dispatch`) | Deploy app to OCI Kind cluster via SSH |
+| **Destroy** (`destroy.yml`) | Manual (requires confirmation) | Teardown deployed resources on OCI |
+
+#### Troubleshooting OCI Deployment
+
+```bash
+# SSH into the instance
+ssh opc@<OCI_PUBLIC_IP>
+
+# Check Kind cluster status
+sudo kind get clusters
+kubectl get nodes
+
+# Check pods
+kubectl -n docbook get pods
+
+# View backend logs
+kubectl -n docbook logs -f deployment/backend
+
+# Check port-forward services
+sudo systemctl status docbook-port-forward-frontend
+sudo systemctl status docbook-port-forward-backend
+
+# Restart port-forwarding
+sudo systemctl restart docbook-port-forward-frontend
+sudo systemctl restart docbook-port-forward-backend
+
+# Manually run seed (if needed)
+kubectl -n docbook exec -it deployment/backend -- python seed.py
+```
+
+---
+
+### Option 4 — Run without Docker (Manual Setup)
 
 ### Prerequisites
 - **Python 3.9+**
@@ -401,13 +572,15 @@ Frontend available at: **http://localhost:3000**
 
 ## Resume Description
 
-> **DocBook — Doctor Appointment Booking System** *(Full Stack)*
+> **DocBook — Doctor Appointment Booking System** *(Full Stack + DevOps)*
 > - Built a comprehensive doctor appointment booking system with **Python (FastAPI)** backend and **React** frontend connected to **MySQL** database
 > - Implemented **JWT authentication** with access/refresh token rotation and **role-based access control** (Patient/Doctor/Admin)
 > - Developed **smart time-slot management** engine that auto-generates bookable slots from doctor's weekly recurring schedules
 > - Created **RESTful APIs** (25+ endpoints) for appointment booking, doctor search with filters, reviews/ratings, and real-time notifications
 > - Built **responsive UI** with Tailwind CSS featuring patient dashboard, doctor schedule management, and admin analytics with data visualization
-> - **Tech Stack:** Python, FastAPI, SQLAlchemy, React 18, MySQL, JWT, Tailwind CSS
+> - Deployed on **OCI** using **Kind (Kubernetes in Docker)** with a 3-node cluster, automated via **GitHub Actions CI/CD** pipelines (lint, test, build, deploy, destroy)
+> - Configured **systemd services** for persistent port-forwarding, **firewalld** rules, and infrastructure-as-code with Kubernetes manifests
+> - **Tech Stack:** Python, FastAPI, SQLAlchemy, React 18, MySQL, JWT, Tailwind CSS, Docker, Kubernetes, Kind, GitHub Actions, OCI, Oracle Linux
 
 ## License
 
