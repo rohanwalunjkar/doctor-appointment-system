@@ -121,31 +121,51 @@ jobs:
             echo "Waiting for frontend rollout..."
             kubectl rollout status deployment/frontend -n docbook --timeout=120s || true
 
-            # ─── Kill old port-forwards & start new ones ──────────
+            # ─── Setup Port-Forward Services (systemd) ──────────
             echo ""
-            echo "=== Restarting Port Forwards ==="
-            # Kill old port-forwards using saved PIDs
-            if [ -f /tmp/pf-frontend.pid ]; then
-              kill $(cat /tmp/pf-frontend.pid) 2>/dev/null || true
-              rm -f /tmp/pf-frontend.pid
-            fi
-            if [ -f /tmp/pf-backend.pid ]; then
-              kill $(cat /tmp/pf-backend.pid) 2>/dev/null || true
-              rm -f /tmp/pf-backend.pid
-            fi
-            sleep 2
+            echo "=== Setting up Port-Forward Services ==="
 
-            # Port-forward frontend (3000 → external access)
-            nohup kubectl port-forward svc/frontend-service 3000:3000 -n docbook --address=0.0.0.0 > /tmp/pf-frontend.log 2>&1 &
-            echo $! > /tmp/pf-frontend.pid
-            echo "Frontend port-forward started (port 3000, PID: $(cat /tmp/pf-frontend.pid)) ✓"
+            # Create frontend port-forward service
+            sudo tee /etc/systemd/system/docbook-frontend-pf.service > /dev/null <<'EOF'
+            [Unit]
+            Description=DocBook Frontend Port Forward
+            After=network.target
 
-            # Port-forward backend (8000 → external access)
-            nohup kubectl port-forward svc/backend-service 8000:8000 -n docbook --address=0.0.0.0 > /tmp/pf-backend.log 2>&1 &
-            echo $! > /tmp/pf-backend.pid
-            echo "Backend port-forward started (port 8000, PID: $(cat /tmp/pf-backend.pid)) ✓"
+            [Service]
+            Type=simple
+            User=opc
+            ExecStart=/usr/local/bin/kubectl port-forward svc/frontend-service 3000:3000 -n docbook --address=0.0.0.0
+            Restart=always
+            RestartSec=5
 
+            [Install]
+            WantedBy=multi-user.target
+            EOF
+
+            # Create backend port-forward service
+            sudo tee /etc/systemd/system/docbook-backend-pf.service > /dev/null <<'EOF'
+            [Unit]
+            Description=DocBook Backend Port Forward
+            After=network.target
+
+            [Service]
+            Type=simple
+            User=opc
+            ExecStart=/usr/local/bin/kubectl port-forward svc/backend-service 8000:8000 -n docbook --address=0.0.0.0
+            Restart=always
+            RestartSec=5
+
+            [Install]
+            WantedBy=multi-user.target
+            EOF
+
+            # Enable and restart services
+            sudo systemctl daemon-reload
+            sudo systemctl enable docbook-frontend-pf docbook-backend-pf
+            sudo systemctl restart docbook-frontend-pf docbook-backend-pf
             sleep 3
+            echo "Frontend port-forward service: $(sudo systemctl is-active docbook-frontend-pf)"
+            echo "Backend port-forward service: $(sudo systemctl is-active docbook-backend-pf)"
 
             # ─── Deployment Verification & Logs ───────────────────
             echo ""
