@@ -124,10 +124,8 @@ jobs:
             # ─── Kill old port-forwards & start new ones ──────────
             echo ""
             echo "=== Restarting Port Forwards ==="
-            set +e
-            pkill -f "kubectl port-forward" 2>/dev/null
-            sleep 2
-            set -e
+            (pkill -f "kubectl port-forward" || true) 2>/dev/null
+            sleep 3
 
             # Port-forward frontend (3000 → external access)
             nohup kubectl port-forward svc/frontend-service 3000:3000 -n docbook --address=0.0.0.0 > /tmp/pf-frontend.log 2>&1 &
