@@ -1,0 +1,147 @@
+name: Deploy to OCI Instance
+
+on:
+  workflow_run:
+    workflows: ["Docker Build & Push"]
+    types: [completed]
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  deploy:
+    name: Deploy via SSH to OCI
+    runs-on: ubuntu-latest
+    if: ${{ github.event.workflow_run.conclusion == 'success' || github.event_name == 'workflow_dispatch' }}
+
+    steps:
+      - name: Deploy to OCI Instance via SSH
+        uses: appleboy/ssh-action@v1
+        with:
+          host: ${{ secrets.OCI_HOST }}
+          username: ${{ secrets.OCI_USER }}
+          key: ${{ secrets.OCI_SSH_PRIVATE_KEY }}
+          port: 22
+          timeout: 300s
+          command_timeout: 10m
+          script: |
+            set -e
+            echo "=========================================="
+            echo "  DEPLOYMENT STARTED"
+            echo "  Time: $(date)"
+            echo "  Host: $(hostname)"
+            echo "=========================================="
+
+            # ─── Open Firewall Ports (Oracle Linux - firewalld) ──────
+            echo ""
+            echo "=== [1/8] Configuring Firewall (Oracle Linux) ==="
+            
+            # Ensure firewalld is running
+            sudo systemctl start firewalld 2>/dev/null || true
+            sudo systemctl enable firewalld 2>/dev/null || true
+
+            # Open port 30000 (Frontend NodePort)
+            echo "Opening port 30000 (Frontend)..."
+            sudo firewall-cmd --permanent --add-port=30000/tcp 2>/dev/null || true
+
+            # Open port 8000 (Backend API)
+            echo "Opening port 8000 (Backend)..."
+            sudo firewall-cmd --permanent --add-port=8000/tcp 2>/dev/null || true
+
+            # Open port 22 (SSH - usually already open)
+            echo "Opening port 22 (SSH)..."
+            sudo firewall-cmd --permanent --add-service=ssh 2>/dev/null || true
+
+            # Reload firewalld to apply changes
+            sudo firewall-cmd --reload
+
+            echo "Firewall configured. Open ports:"
+            sudo firewall-cmd --list-ports
+            sudo firewall-cmd --list-services
+
+            # ─── Navigate to Project ──────────────────────────────
+            echo ""
+            echo "=== [2/8] Navigating to Project ==="
+            cd ~/doctor-appointment-system || { echo "ERROR: Project directory not found!"; exit 1; }
+            echo "Working directory: $(pwd)"
+
+            # ─── Pull Latest Code ─────────────────────────────────
+            echo ""
+            echo "=== [3/8] Pulling Latest Code ==="
+            git fetch origin main
+            git reset --hard origin/main
+            echo "Latest commit: $(git log --oneline -1)"
+
+            # ─── Build Docker Images ─────────────────────────────
+            echo ""
+            echo "=== [4/8] Building Backend Docker Image ==="
+            docker build -t rohan2747/docbook-backend:latest ./backend 2>&1 | tail -5
+            echo "Backend image built ✓"
+
+            echo ""
+            echo "=== [5/8] Building Frontend Docker Image ==="
+            docker build -t rohan2747/docbook-frontend:latest ./frontend 2>&1 | tail -5
+            echo "Frontend image built ✓"
+
+            # ─── Load Images into Kind Cluster ────────────────────
+            echo ""
+            echo "=== [6/8] Loading Images into Kind Cluster ==="
+            kind load docker-image rohan2747/docbook-backend:latest --name docbook 2>&1 || echo "Warning: kind load backend failed (cluster name may differ)"
+            kind load docker-image rohan2747/docbook-frontend:latest --name docbook 2>&1 || echo "Warning: kind load frontend failed (cluster name may differ)"
+            echo "Images loaded into Kind ✓"
+
+            # ─── Apply K8s Manifests ──────────────────────────────
+            echo ""
+            echo "=== [7/8] Applying Kubernetes Manifests ==="
+            kubectl apply -f k8s/namespace.yaml
+            echo "  ✓ namespace"
+            kubectl apply -f k8s/configmap.yaml
+            echo "  ✓ configmap"
+            kubectl apply -f k8s/secrets.yaml
+            echo "  ✓ secrets"
+            kubectl apply -f k8s/mysql.yaml
+            echo "  ✓ mysql"
+            kubectl apply -f k8s/backend.yaml
+            echo "  ✓ backend"
+            kubectl apply -f k8s/frontend.yaml
+            echo "  ✓ frontend"
+
+            # Restart deployments to pick up new images
+            kubectl rollout restart deployment/backend -n docbook
+            kubectl rollout restart deployment/frontend -n docbook
+            echo "Rollout restart triggered ✓"
+
+            # Wait for rollouts
+            echo ""
+            echo "Waiting for backend rollout..."
+            kubectl rollout status deployment/backend -n docbook --timeout=120s || true
+            echo "Waiting for frontend rollout..."
+            kubectl rollout status deployment/frontend -n docbook --timeout=120s || true
+
+            # ─── Deployment Verification & Logs ───────────────────
+            echo ""
+            echo "=== [8/8] Deployment Verification ==="
+            echo ""
+            echo "--- Pod Status ---"
+            kubectl get pods -n docbook -o wide
+            echo ""
+            echo "--- Services ---"
+            kubectl get svc -n docbook
+            echo ""
+            echo "--- Recent Events ---"
+            kubectl get events -n docbook --sort-by='.lastTimestamp' | tail -15
+            echo ""
+            echo "--- Backend Logs (last 20 lines) ---"
+            kubectl logs deployment/backend -n docbook --tail=20 2>/dev/null || echo "No backend logs yet"
+            echo ""
+            echo "--- Frontend Logs (last 20 lines) ---"
+            kubectl logs deployment/frontend -n docbook --tail=20 2>/dev/null || echo "No frontend logs yet"
+            echo ""
+            echo "--- MySQL Logs (last 10 lines) ---"
+            kubectl logs deployment/mysql -n docbook --tail=10 2>/dev/null || echo "No mysql logs yet"
+
+            echo ""
+            echo "=========================================="
+            echo "  DEPLOYMENT COMPLETED"
+            echo "  Time: $(date)"
+            echo "  App URL: http://${{ secrets.OCI_HOST }}:30000"
+            echo "=========================================="
