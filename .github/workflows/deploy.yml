@@ -43,6 +43,10 @@ jobs:
             echo "Opening port 30000 (Frontend)..."
             sudo firewall-cmd --permanent --add-port=30000/tcp 2>/dev/null || true
 
+            # Open port 3000 (Frontend port-forward)
+            echo "Opening port 3000 (Frontend)..."
+            sudo firewall-cmd --permanent --add-port=3000/tcp 2>/dev/null || true
+
             # Open port 8000 (Backend API)
             echo "Opening port 8000 (Backend)..."
             sudo firewall-cmd --permanent --add-port=8000/tcp 2>/dev/null || true
@@ -117,6 +121,22 @@ jobs:
             echo "Waiting for frontend rollout..."
             kubectl rollout status deployment/frontend -n docbook --timeout=120s || true
 
+            # ─── Kill old port-forwards & start new ones ──────────
+            echo ""
+            echo "=== Restarting Port Forwards ==="
+            pkill -f "kubectl port-forward" 2>/dev/null || true
+            sleep 2
+
+            # Port-forward frontend (3000 → external access)
+            nohup kubectl port-forward svc/frontend-service 3000:3000 -n docbook --address=0.0.0.0 > /tmp/pf-frontend.log 2>&1 &
+            echo "Frontend port-forward started (port 3000) ✓"
+
+            # Port-forward backend (8000 → external access)
+            nohup kubectl port-forward svc/backend-service 8000:8000 -n docbook --address=0.0.0.0 > /tmp/pf-backend.log 2>&1 &
+            echo "Backend port-forward started (port 8000) ✓"
+
+            sleep 3
+
             # ─── Deployment Verification & Logs ───────────────────
             echo ""
             echo "=== [8/8] Deployment Verification ==="
@@ -143,5 +163,6 @@ jobs:
             echo "=========================================="
             echo "  DEPLOYMENT COMPLETED"
             echo "  Time: $(date)"
-            echo "  App URL: http://${{ secrets.OCI_HOST }}:30000"
+            echo "  App URL: http://${{ secrets.OCI_HOST }}:3000"
             echo "=========================================="
+
