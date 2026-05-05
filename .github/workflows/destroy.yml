@@ -32,6 +32,9 @@ jobs:
             echo "  Host: $(hostname)"
             echo "=========================================="
 
+            # ─── Navigate to project directory ────────────────────
+            cd ~/doctor-appointment-system || cd ~/docbook || true
+
             # ─── Stop Port-Forward Services ───────────────────────
             echo ""
             echo "=== [1/4] Stopping Port-Forward Services ==="
@@ -47,19 +50,9 @@ jobs:
             # ─── Delete Kubernetes Resources ──────────────────────
             echo ""
             echo "=== [2/4] Deleting Kubernetes Resources ==="
-            kubectl delete -f k8s/frontend.yaml --ignore-not-found=true 2>/dev/null || true
-            echo "  ✓ frontend deleted"
-            kubectl delete -f k8s/backend.yaml --ignore-not-found=true 2>/dev/null || true
-            echo "  ✓ backend deleted"
-            kubectl delete -f k8s/mysql.yaml --ignore-not-found=true 2>/dev/null || true
-            echo "  ✓ mysql deleted"
-            kubectl delete -f k8s/secrets.yaml --ignore-not-found=true 2>/dev/null || true
-            echo "  ✓ secrets deleted"
-            kubectl delete -f k8s/configmap.yaml --ignore-not-found=true 2>/dev/null || true
-            echo "  ✓ configmap deleted"
-            kubectl delete -f k8s/namespace.yaml --ignore-not-found=true 2>/dev/null || true
-            echo "  ✓ namespace deleted"
-            echo "All K8s resources deleted ✓"
+            # Delete the entire namespace (removes all resources within it)
+            kubectl delete namespace docbook --ignore-not-found=true --timeout=120s 2>/dev/null || true
+            echo "Namespace 'docbook' and all resources deleted ✓"
 
             # ─── Remove Docker Images ─────────────────────────────
             echo ""
